@@ -1,7 +1,8 @@
 #include <iostream>
-#include <omp.h>
+// #include <omp.h>
 #include <immintrin.h>
 //compile option: g++ operator_AVX512.cpp -march=native  -o operator_AVX512
+//compile option: clang++ -mavx512f -mavx512cd -mavx512bw -mavx512dq -mavx512vl -O3 -o DL_operator_AVX512 DL_operator_AVX512.cpp
 
 
 // src: (rows,cols), img size: (N,C,H,W)->rows = N, cols = CxHxW
@@ -95,10 +96,10 @@ __m512 _maskz_loadu(const float *data_base, __mmask16 mask)
     return (__m512)(_mm512_maskz_loadu_ps(mask, (__m512*)(data_base)));
 }
 
-// store result to data using mask = 1
-void _mask_store(float *data_base, __m512 res, __mmask16 mask)
+// store result to data_base using mask = 1
+void _mask_storeu(float *data_base, __m512 res, __mmask16 mask)
 {
-    _mm512_maskz_storeu_ps((__m512*)data_base, mask, res);
+    _mm512_mask_storeu_ps((__m512*)data_base, mask, res);
 }
 
 void BiasAdd(float *src, float *bias, int rows, int cols, int stride)
@@ -117,11 +118,11 @@ void BiasAdd(float *src, float *bias, int rows, int cols, int stride)
         
         if(j < cols) // cols=260, this part handle (260 - 256 + 1) tail data
         {
-            __mmask16 mask = (1 << cols - j) - 1; // 10000 - 1 =>01111
+            __mmask16 mask = (1 << (cols - j)) - 1; // 10000 - 1 =>01111
             auto dat = _maskz_loadu(src + i*cols + j, mask);
             auto bias_dat = _maskz_loadu(bias + j, mask);
             auto vec_out = _mm512_add_ps(dat, bias_dat);
-            _mask_store(src + i*cols + j, vec_out, mask);
+            _mask_storeu(src + i*cols + j, vec_out, mask);
         }
     }
 }
@@ -149,7 +150,7 @@ void LayNorm_main()
 
     // call kernel
     layernorm_avx(src, gamma, beta, dst, ln_eps, rows, cols);
-    std::cout << "layernorm output: " << dst[0] << std::endl; // 0.17082
+    std::cout << "layernorm output: " << dst[0] << std::endl; // -0.17082
     free(src);
     free(dst);
     free(gamma);
@@ -173,11 +174,10 @@ void BiasAdd_main()
             bias[i] = 1.0F;
         }
     }
-    
+
     // call kernel
     BiasAdd(src, bias, rows, cols, 2);
     std::cout << "biasAdd output: " << src[259] << std::endl; // 4+1=5
-
     free(src);
     free(bias);
 }
@@ -203,25 +203,25 @@ void RMSNorm_main()
 
     // call kernel
     RMSnorm_fp32(src, gamma, dst, ln_eps, rows, cols);
-    std::cout << "layernorm output: " << dst[0] << std::endl; // -0.17082
+    std::cout << "RMSnorm output: " << dst[0] << std::endl; //0.182574
     free(src);
     free(dst);
     free(gamma);
     free(dst);
 }
 
-//./lesson8 1 to run layernorm
-//./lesson8 to run biasadd
+//./DL_operator_AVX512 1   to run layernorm
+//./DL_operator_AVX512 1 2 to run biasadd
+//./DL_operator_AVX512     to run RMSNorm_main
 int main(int argc, char *argv[]) {
-  if(argv[1])
-  {
-    LayNorm_main();
+  if (argc == 2) {         // provide at less 1 param, argc >= 2
+    LayNorm_main();        // execute LayNorm_main
+  } 
+  else if (argc == 3) {    // provide at less 2 param, argc >= 3
+    BiasAdd_main();        // execute BiasAdd_main
+  } 
+  else {                   // provide no param
+    RMSNorm_main();        // execute RMSNorm_main
   }
-  else if(argv[2]){
-    BiasAdd_main();
-  }
-  else
-  {
-    RMSNorm_main();
-  }
+  return 0;
 }
